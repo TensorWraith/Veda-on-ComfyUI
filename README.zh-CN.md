@@ -22,10 +22,11 @@
   视频越长收益越大。
 - **即插即用**：它是 attention override，不改权重，所以 Turbo / 风格 LoRA、微调或量化的 H3
   权重、首尾帧与参考条件、其他 block 补丁都照常工作。
-- **默认安全**：每个 kernel 在使用前先在你的显卡上自检。Veda 处理不了的情况交还给模型自己的
-  注意力，并在节点上说明原因，而不是给你一张坏图。
+- **不会悄悄失效**：每个 kernel 在使用前先在你的显卡上自检。Veda 跑不了时直接报错并说明原因，
+  而不是悄悄不加速地跑完：缺包、节点位置不对这类问题会告诉你怎么修，其他问题附上可以直接贴到
+  GitHub issue 的完整报告。
 - **不用额外安装**：稀疏 kernel 跟节点一起发布，从 Comfy Registry 安装时会自动带上
-  Triton（NVIDIA，SM80 及以上）或 MLX（Apple silicon）。
+  Triton（NVIDIA SM80 及以上，ROCm 上的 AMD RDNA3 / RDNA4）或 MLX（Apple silicon）。
 
 ## 安装
 
@@ -77,7 +78,7 @@ Attention computed: 10.9% of full attention (89.1% skipped)
 ```
 
 采样前显示将要使用的 kernel 和稀疏度；采样中显示视频尺寸和匹配到的训练方案；结束时显示实际
-算了全注意力的百分之多少。`Veda off` 开头的行写着 Veda 没有生效的原因；「Tile plan」一行出现
+算了全注意力的百分之多少。Veda 跑不了时会直接报错并写明原因；「Tile plan」一行出现
 `nearest trained size: ...` 表示这次的尺寸不在训练集里。打开 `verbose` 会额外显示各阶段耗时、
 调用次数和打分器信息。
 
@@ -115,8 +116,9 @@ ComfyUI 在 `--use-sage-attention` 后面跑的那套代码，所以画质和那
 
 ## 硬件
 
-一个 Triton kernel 覆盖 SM80 起的所有 NVIDIA 显卡，Windows 和 Linux 都一样。更老的卡、ROCm
-和 CPU 没有 kernel：节点会说明，模型跑自己的注意力。
+一个 Triton kernel 覆盖 SM80 起的所有 NVIDIA 显卡和 ROCm 上的 AMD RDNA3 / RDNA4，Windows 和
+Linux 都一样。更老的卡、其他 AMD 显卡和 CPU 没有 kernel：节点会报错说明；要在这些设备上
+出图，请绕过 Veda 节点。
 
 | 硬件 | 状态 |
 |---|---|
@@ -125,6 +127,8 @@ ComfyUI 在 `--use-sage-attention` 后面跑的那套代码，所以画质和那
 | B200 / B300（sm100 / sm103） | 代码路径就绪，尚未在该硬件上验证 |
 | RTX 50、RTX PRO 6000 Blackwell（sm120） | **已验证：RTX 5070 + Windows 11** |
 | DGX Spark / GB10（sm121） | 代码路径就绪，尚未在该硬件上验证 |
+| Radeon RX 9000（RDNA4，gfx12），ROCm | 已验证：RX 9060 XT + Windows 11 |
+| Radeon RX 7000（RDNA3，gfx11），ROCm | 代码路径就绪，尚未在该硬件上验证 |
 | Apple silicon（M 系列） | 已验证：M3 Pro + macOS 15 |
 
 分架构的说明和完整实测记录见

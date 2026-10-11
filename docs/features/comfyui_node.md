@@ -60,11 +60,22 @@
   是全价）；其余记成 `other attention`，不计入——否则 refiner 会把"算了全注意力的百分之多少"
   这个数字搅乱。
 - ComfyUI 自带的 "Model Sparse Attention" 在 H3 上用 block patch 直接替换注意力，Veda 的
-  override 就不会被调用；节点检测到它时给出警告，而不是静默无效。
-- **不坏图**：稀疏路径里的任何异常（OOM、kernel 失败）都被捕获，提示后本次运行剩余部分走全注意力；
-  ComfyUI 的中断异常照常抛出。
-- **可见的回退**：没有可用 kernel、布局读不懂、未训练的尺寸、头数不匹配……每一种都在节点上显示
-  一次（`status.NodeStatus` → `send_progress_text`），不需要前端扩展。
+  override 就不会被调用；节点检测到它时直接报错，让用户二选一，而不是静默无效。
+- **出错不回退**：用户以为在加速的渲染必须真的在加速，所以 Veda 跑不了就停下并说明原因，不再
+  悄悄退回全注意力。kernel 在节点执行时就 `resolve`（编译 + 自检，结果按设备缓存），起不来就
+  在 Veda 节点上报错，而不是等到采样第一步才在 KSampler 上报。错误分两类：
+  - 用户自己能修的，报错里直接写怎么修：缺 Triton / MLX（`base.MissingDependency`，带安装
+    命令；Linux ROCm 装 `pytorch-triton-rocm`，不装 PyPI 的 `triton`，后者会覆盖 torch 配套的
+    那份）、硬件不在范围内（写明支持什么、绕过节点即可出图）、后端认得的安装问题
+    （`Backend.explain_failure`）、别的节点在 Veda 之后替换了注意力、显存不足。
+  - 其他（kernel 编译或自检失败、运行时异常、布局读不懂、头数不匹配）用 `status.issue_report`：
+    结论、issue 地址、环境（Veda / OS / Python / torch 与 CUDA 或 HIP / kernel 相关包 /
+    ComfyUI / 设备）、这次调用的上下文（block、step、q 形状、设置、打分器）和 traceback。
+  - 显存不足仍然抛 `torch.cuda.OutOfMemoryError`（只换了文字）：ComfyUI 的执行器看到这个类型才会
+    卸载模型，包成别的异常会让用户下一次尝试也拿不回显存。
+  - ComfyUI 的中断异常照常抛出。
+- 设计上就走全注意力的调用（`full_attention_layers` / `steps`、0% 稀疏、带 mask 的调用、
+  非 H3 的调用、另一个分辨率的 pass）不算出错：照常走，计入运行结束的摘要。
 - **"硬件不支持"和"装坏了"要分开说**：`Resolution.has_candidate` 为假才是这张卡不在范围内；
   为真而 `backend` 是 None，说明覆盖它的 kernel 没能在这台机器上启动起来，那是环境问题。
   两者的提示完全不同，混在一起会让用户去查一个并不存在的硬件问题（3090 的例子见

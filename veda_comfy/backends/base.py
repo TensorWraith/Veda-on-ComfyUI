@@ -29,6 +29,15 @@ class BackendUnavailable(RuntimeError):
     """The backend cannot run here; the message is shown to the user."""
 
 
+class MissingDependency(BackendUnavailable):
+    """A package the backend needs is not installed.
+
+    The user can fix this alone, so the message must be the fix: what to
+    install, with which command, and that ComfyUI needs a restart. The
+    node shows it as is and does not ask for an issue.
+    """
+
+
 class Backend(abc.ABC):
     """Block-sparse attention on tile-ordered tensors.
 

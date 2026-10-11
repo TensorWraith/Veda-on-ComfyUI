@@ -25,6 +25,24 @@ def node(tmp_path, monkeypatch):
     return nodes
 
 
+@pytest.fixture(autouse=True)
+def on_reference_backend(monkeypatch):
+    """The node resolves the kernel before it patches anything, and on
+    CPU CI no shipped kernel runs; the exact reference backend stands in
+    (as in test_comfy_integration.py)."""
+    import reference_backend
+    from veda_comfy import backends
+    from veda_comfy import hardware
+
+    def resolve(device, notify=None):
+        del notify
+        return backends.Resolution(hardware.describe(device),
+                                   reference_backend.ReferenceBackend(),
+                                   [('reference', 'ok')])
+
+    monkeypatch.setattr(backends, 'resolve', resolve)
+
+
 def _patcher(layers=2, heads=2):
     import comfy.model_patcher
     import comfy.ops
@@ -185,9 +203,9 @@ def test_execute_takes_over_a_forward_replacement_before_it(node,
     assert '已接管' in shown[-1]
 
 
-def test_a_forward_replacement_after_veda_is_reported(node, monkeypatch):
+def test_a_forward_replacement_after_veda_stops_the_run(node):
     import comfy.patcher_extension
-    shown = _capture(monkeypatch)
+    from veda_comfy import status
     out = node.VedaSparseAttention.execute(_patcher(),
                                            'tiny.safetensors').result[0]
     later = out.clone()
@@ -196,10 +214,26 @@ def test_a_forward_replacement_after_veda_is_reported(node, monkeypatch):
                            _bypassing(block.attn))
     prepare = later.get_all_callbacks(
         comfy.patcher_extension.CallbacksMP.ON_PREPARE_STATE)
-    for callback in prepare:
-        callback(later, None, later.model_options)
-    assert shown[-1].startswith('Veda is not running: "MiniMax H3 Mem Eff')
-    assert '\nVeda 未运行' in shown[-1]
+    with pytest.raises(status.VedaError) as caught:
+        for callback in prepare:
+            callback(later, None, later.model_options)
+    text = str(caught.value)
+    assert text.startswith('Veda cannot run: "MiniMax H3 Mem Eff')
+    assert '\nVeda 无法运行' in text
+    assert status.ISSUES_URL not in text  # moving a node is the fix
+
+
+def test_a_device_without_a_kernel_stops_at_the_node(node, monkeypatch):
+    """No silent full attention: on a device no kernel covers, the node
+    raises (saying what is supported) instead of patching the model."""
+    from veda_comfy import backends
+    from veda_comfy import hardware
+    from veda_comfy import status
+    monkeypatch.setattr(
+        backends, 'resolve', lambda device, notify=None: backends.Resolution(
+            hardware.describe(device), None, []))
+    with pytest.raises(status.VedaError, match='no sparse kernel covers'):
+        node.VedaSparseAttention.execute(_patcher(), 'tiny.safetensors')
 
 
 @pytest.mark.parametrize('kwargs', [

@@ -95,6 +95,18 @@ def test_non_cuda_candidates():
     assert backends.candidates(_info((7, 5), 'NVIDIA T4')) == []
 
 
+@pytest.mark.parametrize('arch,cc,expected', [
+    ('gfx1200', (12, 0), ['triton-int8']),
+    ('gfx1100', (11, 0), ['triton-int8']),
+    ('gfx1030', (10, 3), []),
+    ('gfx942', (9, 4), []),
+])
+def test_rocm_candidates(arch, cc, expected):
+    info = dataclasses.replace(_info(cc, 'AMD Radeon'), family=arch,
+                               subtype='rocm', cuda=None)
+    assert backends.candidates(info) == expected
+
+
 def test_reference_backend_passes_self_test_on_cpu():
     base.self_test(ReferenceBackend(), torch.device('cpu'), torch.float32)
 
@@ -161,9 +173,9 @@ def test_triton_backend_explains_a_failed_helper_build():
     assert backend.explain_failure(RuntimeError('out of memory')) is None
 
 
-def _resolution(attempts, hints=()):
+def _resolution(attempts, hints=(), error=None):
     return backends.Resolution(_info((8, 6), 'NVIDIA GeForce RTX 3090'),
-                               None, list(attempts), list(hints))
+                               None, list(attempts), list(hints), error)
 
 
 def test_a_supported_gpu_whose_kernel_failed_is_not_blamed():
@@ -171,18 +183,48 @@ def test_a_supported_gpu_whose_kernel_failed_is_not_blamed():
     when the kernel was right for the GPU and its build had failed, which
     sends people hunting for a hardware problem they do not have."""
     from veda_comfy import comfy_patch
-    broken = _resolution([('triton-int8', str(_TCC_ERROR))], ['copy libs'])
+    from veda_comfy import status
+    broken = _resolution([('triton-int8', str(_TCC_ERROR))], ['copy libs'],
+                         _TCC_ERROR)
     assert broken.has_candidate
-    english, chinese = comfy_patch._no_kernel_text(broken)
-    assert 'RTX 3090 (SM86) is supported' in english
-    assert 'copy libs' in english and 'copy libs' in chinese
-    assert '本身是支持的' in chinese
+    text = str(comfy_patch.kernel_error(broken))
+    assert 'cannot start its sparse kernel on RTX 3090 (SM86)' in text
+    assert 'copy libs' in text and '解决办法' in text
+    assert status.ISSUES_URL not in text  # the hint is the fix
 
-    unsupported = _resolution([])
-    assert not unsupported.has_candidate
-    english, chinese = comfy_patch._no_kernel_text(unsupported)
-    assert 'has no sparse kernel' in english and 'SM80' in english
-    assert '没有可用的稀疏 kernel' in chinese
+    unsupported = str(comfy_patch.kernel_error(_resolution([])))
+    assert 'no sparse kernel covers this device' in unsupported
+    assert 'SM80' in unsupported and 'RDNA3' in unsupported
+    assert '绕过或删除 Veda 节点' in unsupported
+    assert status.ISSUES_URL not in unsupported  # not a bug
+
+
+def test_a_missing_package_is_explained_not_reported():
+    from veda_comfy import comfy_patch
+    from veda_comfy import status
+    missing = base.MissingDependency('Triton is not installed. python -m '
+                                     'pip install triton')
+    text = str(comfy_patch.kernel_error(
+        _resolution([('triton-int8', str(missing))], (), missing)))
+    assert 'python -m pip install triton' in text
+    assert status.ISSUES_URL not in text
+
+
+def test_a_kernel_failure_nobody_recognises_comes_with_a_report():
+    from veda_comfy import comfy_patch
+    from veda_comfy import status
+    try:
+        raise RuntimeError('LLVM ERROR: unsupported intrinsic')
+    except RuntimeError as error:
+        failure = error
+    text = str(comfy_patch.kernel_error(_resolution(
+        [('triton-int8', f'RuntimeError: {failure}')], (), failure)))
+    assert status.ISSUES_URL in text
+    for part in ('Veda: ', 'torch: ', 'Kernel packages: ', 'ComfyUI: ',
+                 'Device: NVIDIA GeForce RTX 3090, sm86',
+                 'Attempts: triton-int8: RuntimeError',
+                 'Traceback', 'unsupported intrinsic'):
+        assert part in text, f'missing {part!r}'
 
 
 def test_the_default_budget_does_not_move_with_the_grid():

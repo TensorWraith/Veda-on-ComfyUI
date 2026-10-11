@@ -8,18 +8,48 @@ Warnings and errors are bilingual, English then Chinese: the backend cannot
 know which language each browser shows, so runtime text carries both
 (`bilingual`). Static text (node name, description, tooltips) follows the
 UI language through `locales/`; plain status lines stay English.
+
+Errors do not fall back to full attention: a render the user believes is
+accelerated must be. `VedaError` stops the run and says why. When the
+user can fix it (a missing package, an unsupported GPU, two nodes in the
+wrong order) the text says how; otherwise `issue_report` attaches what an
+issue needs and where to file it.
 """
 
 from __future__ import annotations
 
 import logging
+import traceback
 
 _LOG = logging.getLogger('veda')
+
+ISSUES_URL = 'https://github.com/veda-sparse/Veda-on-ComfyUI/issues/new'
+
+
+class VedaError(RuntimeError):
+    """Veda cannot run this render; the message is shown to the user."""
 
 
 def bilingual(en: str, zh: str) -> str:
     """A warning or error for the user: the English text, then Chinese."""
     return f'{en}\n{zh}'
+
+
+def issue_report(en: str, zh: str, context: list[str],
+                 error: BaseException | None = None) -> VedaError:
+    """A `VedaError` for a failure only we can fix: what happened, then
+    the environment, the details and the traceback, ready to paste into
+    an issue."""
+    lines = [en, zh, '',
+             f'Please open an issue at {ISSUES_URL} with everything below.',
+             f'请到 {ISSUES_URL} 提 issue，并附上下面的全部内容。',
+             '', '--- Veda error report ---', *context]
+    if error is not None:
+        lines += ['', *(line.rstrip('\n') for line in
+                        traceback.format_exception(
+                            type(error), error, error.__traceback__))]
+    lines.append('--- end of report ---')
+    return VedaError('\n'.join(lines))
 
 
 class NodeStatus:

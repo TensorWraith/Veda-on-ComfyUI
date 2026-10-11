@@ -45,8 +45,10 @@ import torch
 import comfy.patcher_extension
 
 from . import backends
+from . import hardware
 from . import settings as veda_settings
 from . import status as veda_status
+from .backends import base as backends_base
 from .core import engine as veda_engine
 from .core import h3_layout
 from .core import plans as veda_plans
@@ -147,30 +149,68 @@ def describe_forward(forward) -> str:
     return f'{name} ({module})' if module else name
 
 
-def _no_kernel_text(resolution) -> tuple[str, str]:
-    """(English, Chinese) for a device that ends up on full attention.
+def _comfyui_version() -> str:
+    try:
+        import comfyui_version  # pylint: disable=import-outside-toplevel
+        return comfyui_version.__version__
+    except Exception:  # very old ComfyUI, or not run from ComfyUI's root
+        return 'unknown'
 
-    A GPU with no candidate kernel is out of scope; a GPU whose kernel
-    failed to start is supported and something around it is broken, so
-    saying "no kernel works on your GPU" there sends people looking for
-    a hardware problem they do not have.
+
+def context(info, *details: str) -> list[str]:
+    """The environment of an issue report on device `info`, then
+    `details` (what Veda was doing when it failed)."""
+    return [*hardware.environment(info),
+            f'ComfyUI: {_comfyui_version()}', *details]
+
+
+def kernel_error(resolution) -> veda_status.VedaError:
+    """The error for a device whose sparse kernel cannot run.
+
+    Three cases, told apart because each sends the user somewhere else:
+    the GPU is out of scope (nothing to fix, say what is supported); the
+    kernel is supported but a package is missing or the install is broken
+    in a way the backend recognises (say how to fix it); anything else is
+    ours to fix, so it comes with an issue report. Saying "no kernel works
+    on your GPU" for a failed build sends people looking for a hardware
+    problem they do not have.
     """
     label = resolution.device.label
     if not resolution.has_candidate:
-        return (f'Veda off: {label} has no sparse kernel; using full '
-                'attention. Veda needs an NVIDIA GPU of SM80 (RTX 30 '
-                'series) or newer, or Apple silicon.',
-                f'Veda 未启用：{label} 没有可用的稀疏 kernel，本次使用全'
-                '注意力。Veda 需要 SM80（RTX 30 系）或更新的 NVIDIA 显卡，'
-                '或者 Apple 芯片。')
-    lines = [f'Veda off: {label} is supported, but its sparse kernel did '
-             'not start on this install; using full attention.',
-             resolution.report()]
-    zh = [f'Veda 未启用：{label} 本身是支持的，但这台机器上的稀疏 kernel '
-          '没能启动，本次使用全注意力。原因见上。']
-    lines += resolution.hints
-    zh += resolution.hints
-    return '\n'.join(lines), '\n'.join(zh)
+        return veda_status.VedaError(veda_status.bilingual(
+            f'Veda cannot run on {label}: no sparse kernel covers this '
+            'device. Veda needs an NVIDIA GPU of SM80 (RTX 30 series) or '
+            'newer, an AMD RDNA3 / RDNA4 GPU (RX 7000 / 9000 series) on '
+            'ROCm, or Apple silicon. To render on this machine, bypass or '
+            'remove the Veda node.',
+            f'Veda 无法在 {label} 上运行：没有覆盖这个设备的稀疏 kernel。'
+            'Veda 需要 SM80（RTX 30 系）或更新的 NVIDIA 显卡、ROCm 上的 AMD '
+            'RDNA3 / RDNA4 显卡（RX 7000 / 9000 系），或者 Apple 芯片。要在'
+            '这台机器上出图，请绕过或删除 Veda 节点。'))
+    if isinstance(resolution.error, backends_base.MissingDependency):
+        return veda_status.VedaError(
+            f'Veda cannot start its sparse kernel on {label}.\n'
+            f'Veda 无法在 {label} 上启动稀疏 kernel。\n'
+            f'{resolution.error}')
+    if resolution.hints:
+        return veda_status.VedaError('\n'.join([
+            f'Veda cannot start its sparse kernel on {label}: '
+            f'{resolution.report()}',
+            f'Veda 无法在 {label} 上启动稀疏 kernel（原因见上）。解决办法：',
+            *resolution.hints]))
+    return veda_status.issue_report(
+        f'Veda cannot start its sparse kernel on {label}. The GPU is '
+        'supported; the kernel failed on this install.',
+        f'Veda 无法在 {label} 上启动稀疏 kernel。这张卡是支持的，是 kernel '
+        '在这台机器上出错了。',
+        context(resolution.device, f'Attempts: {resolution.report()}'),
+        resolution.error)
+
+
+def _is_oom(error: BaseException) -> bool:
+    # MPS reports running out of memory as a plain RuntimeError.
+    return (isinstance(error, torch.cuda.OutOfMemoryError)
+            or 'out of memory' in str(error).lower())
 
 
 def _is_interrupt(error: BaseException) -> bool:
@@ -186,7 +226,6 @@ class _Run:
         self.calls = collections.Counter()
         self.evaluations = 0          # model calls (layer 0 reached)
         self.video = None             # e.g. '1344x768 · 5.2 s'
-        self.failed = None            # error text if the sparse path failed
         self.prepared = False         # sampling started (ON_PREPARE_STATE)
         self.spec = None              # layout of this run's target span
         self.plan = None              # the plan chosen for it
@@ -202,7 +241,7 @@ class VedaPatch:
         self.settings = settings
         self.status = veda_status.NodeStatus(node_id)
         self.installed: set = set()
-        self._engines: dict[str, veda_engine.VedaEngine | None] = {}
+        self._engines: dict[str, veda_engine.VedaEngine] = {}
         self._timers: dict[str, veda_engine.PhaseTimer] = {}
         self._steps = weakref.WeakKeyDictionary()
         self.run = _Run()
@@ -215,26 +254,29 @@ class VedaPatch:
 
     # -- per device ------------------------------------------------------
 
-    def _engine(self, device: torch.device) -> veda_engine.VedaEngine | None:
+    def _engine(self, device: torch.device) -> veda_engine.VedaEngine:
+        """The engine for `device`.
+
+        Raises:
+            VedaError: If no sparse kernel runs there (see `kernel_error`).
+        """
         key = str(device)
         if key not in self._engines:
             resolution = backends.resolve(
                 device,
                 notify=self.status.show)
             if resolution.backend is None:
-                self.status.warn(*_no_kernel_text(resolution))
-                self._engines[key] = None
-            else:
-                engine = veda_engine.VedaEngine(
-                    self.bundle, self.settings.generated,
-                    self.settings.reference, resolution.backend, device)
-                if self.settings.verbose:
-                    timer = engine.enable_timing()
-                    if timer is not None:
-                        self._timers[key] = timer
-                    logging.info('Veda: backends on %s: %s',
-                                 resolution.device.label, resolution.report())
-                self._engines[key] = engine
+                raise kernel_error(resolution)
+            engine = veda_engine.VedaEngine(
+                self.bundle, self.settings.generated,
+                self.settings.reference, resolution.backend, device)
+            if self.settings.verbose:
+                timer = engine.enable_timing()
+                if timer is not None:
+                    self._timers[key] = timer
+                logging.info('Veda: backends on %s: %s',
+                             resolution.device.label, resolution.report())
+            self._engines[key] = engine
         return self._engines[key]
 
     def _step(self, transformer_options) -> int | None:
@@ -306,27 +348,21 @@ class VedaPatch:
             try:
                 with _pause_malloc_graph():
                     return patch._sparse(q, k, v, layout, options,
-                                         skip_output_reshape, dense)
-            except Exception as error:  # never lose the user's render
+                                         skip_output_reshape)
+            except veda_status.VedaError:
+                raise  # already says what happened and what to do
+            except Exception as error:  # stop, and say why
                 if _is_interrupt(error):
                     raise
-                patch.run.failed = f'{type(error).__name__}: {error}'
                 logging.error('Veda: sparse attention failed', exc_info=True)
-                patch.status.warn(
-                    'Veda hit an error and finishes this run with full '
-                    f'attention:\n{patch.run.failed}',
-                    zh='Veda 出错，本次剩余部分改用全注意力，渲染照常完成'
-                       '（错误见上）。')
-                return dense('error')
+                raise patch._runtime_error(q, options, error) from error
 
         return override
 
-    def _block_reason(self, options, device=None) -> str | None:
+    def _block_reason(self, options) -> str | None:
         """Why this block runs full attention, from what is known before
         q / k / v exist; None if it may go sparse."""
         s = self.settings
-        if self.run.failed:
-            return 'error'
         layer = options.get('block_index')
         if not isinstance(layer, int) or layer >= self.bundle.num_layers:
             return 'layer outside the predictor'
@@ -336,8 +372,6 @@ class VedaPatch:
             return 'full-attention step'
         if s.generated.keeps_all and s.reference.keeps_all:
             return 'sparsity 0%'
-        if device is not None and self._engines.get(str(device), 0) is None:
-            return 'no sparse kernel'
         return None
 
     def _dense_reason(self, q, options) -> str | None:
@@ -347,21 +381,51 @@ class VedaPatch:
         if reason is not None:
             return reason
         if q.shape[1] != bundle.num_heads or q.shape[3] != bundle.head_dim:
-            self._announce(('shape', tuple(q.shape)),
-                           f'Veda off: an attention call has {q.shape[1]} '
-                           f'heads of dim {q.shape[3]}, the predictor '
-                           f'expects {bundle.num_heads} x {bundle.head_dim}. '
-                           'Another node may split the heads; using full '
-                           'attention.',
-                           warn=True,
-                           zh=f'Veda 未启用：注意力调用有 {q.shape[1]} 个头'
-                              f'（维度 {q.shape[3]}），打分器需要 '
-                              f'{bundle.num_heads} x {bundle.head_dim}。可能有'
-                              '其他节点把头拆开了；本次使用全注意力。')
-            return 'head mismatch'
+            raise veda_status.issue_report(
+                f'Veda stopped: an attention call has {q.shape[1]} heads of '
+                f'dim {q.shape[3]}, the predictor expects '
+                f'{bundle.num_heads} x {bundle.head_dim}. Another node may '
+                'split the heads; if removing the attention nodes around '
+                'Veda does not help, please report it.',
+                f'Veda 已停止：注意力调用有 {q.shape[1]} 个头（维度 '
+                f'{q.shape[3]}），打分器需要 {bundle.num_heads} x '
+                f'{bundle.head_dim}。可能有其他节点把头拆开了；去掉 Veda 前后'
+                '的注意力节点仍然出现的话，请提 issue。',
+                self._call_context(q, options))
         return None
 
-    def _sparse(self, q, k, v, layout, options, skip_output_reshape, dense):
+    def _call_context(self, q, options, *details: str) -> list[str]:
+        """Issue-report context for one attention call."""
+        return context(
+            hardware.describe(q.device),
+            f'Call: block {options.get("block_index")}, '
+            f'step {self._step(options)}, q {tuple(q.shape)} {q.dtype}',
+            f'Settings: {self.settings.describe()}',
+            f'Predictor: {self.bundle.describe()}', *details)
+
+    def _runtime_error(self, q, options, error: BaseException) -> Exception:
+        """The error for an exception in the sparse path.
+
+        Out of memory stays a `torch.cuda.OutOfMemoryError`: ComfyUI's
+        executor unloads its models when it sees one, and the user's next
+        attempt needs that memory back.
+        """
+        if _is_oom(error):
+            return torch.cuda.OutOfMemoryError(veda_status.bilingual(
+                f'Veda ran out of GPU memory in its attention ({error}). '
+                'Lower the resolution or the number of frames, or start '
+                'ComfyUI with --reserve-vram 2 so that more memory stays '
+                'free for attention.',
+                'Veda 在注意力里显存不足（原因见上）。请降低分辨率或帧数，'
+                '或者用 --reserve-vram 2 启动 ComfyUI，给注意力留出更多显存。'))
+        engine = self._engines.get(str(q.device))
+        backend = engine.backend.display if engine else 'none'
+        return veda_status.issue_report(
+            'Veda stopped: its sparse attention failed.',
+            'Veda 已停止：稀疏注意力出错。',
+            self._call_context(q, options, f'Backend: {backend}'), error)
+
+    def _sparse(self, q, k, v, layout, options, skip_output_reshape):
         # ComfyUI records each block's allocations into a malloc graph
         # (comfy-aimdo) and expects everything allocated inside a block to
         # be gone by its end. Veda keeps device state across calls (tile
@@ -370,18 +434,15 @@ class VedaPatch:
         # paused, like ComfyUI's own sparse attention node does for its
         # persistent state. Otherwise the process aborts natively.
         engine = self._engine(q.device)
-        if engine is None:
-            return dense('no sparse kernel')
         try:
             spec = engine.layout_spec(layout)
         except h3_layout.LayoutError as error:
-            self._announce(('layout', str(error)),
-                           f'Veda off for this video: cannot read the H3 '
-                           f'layout ({error}); using full attention.',
-                           warn=True,
-                           zh='Veda 本次未启用：读不懂这个视频的 H3 序列布局'
-                              '（原因见上），本次使用全注意力。')
-            return dense('layout')
+            raise veda_status.issue_report(
+                f'Veda stopped: it cannot read the H3 layout of this video '
+                f'({error}).',
+                'Veda 已停止：读不懂这个视频的 H3 序列布局（原因见上）。',
+                self._call_context(q, options, f'Layout: {layout!r}'),
+                error) from error
         choice = engine.plan_for(spec)
         self.run.video = veda_plans.describe_grid(spec.target.grid)
         self.run.spec, self.run.plan = spec, choice.plan
@@ -453,16 +514,14 @@ class VedaPatch:
 
     def _summary(self) -> str | None:
         run = self.run
-        engines = [e for e in self._engines.values() if e is not None]
+        engines = list(self._engines.values())
         sparse = run.calls.get('sparse', 0)
         full = sum(n for r, n in run.calls.items()
                    if r not in ('sparse', 'other attention'))
         if not sparse and not full:
             return None
         backend = engines[0].backend.display if engines else 'full attention'
-        headline = ('Veda done' if sparse and not run.failed
-                    else 'Veda done, fell back to full attention')
-        lines = [f'{headline} · {backend}']
+        lines = [f'Veda done · {backend}']
         if run.video:
             lines.append(f'Video: {run.video}')
         work = [e.stats.compute_fraction() for e in engines]
@@ -484,8 +543,6 @@ class VedaPatch:
                 f'- {why}. Veda places its tiles from the layout this pass '
                 'reports, so a stage at another resolution, or a tiled '
                 'high-resolution stage, runs unaccelerated.')
-        if run.failed:
-            lines.append(f'Fell back to full attention after: {run.failed}')
         if self.settings.verbose:
             lines += self._diagnostics(engines)
         return '\n'.join(lines)
@@ -584,8 +641,7 @@ class VedaPatch:
         def forward(x, rope_freqs=None, transformer_options={}):
             options = (transformer_options
                        if isinstance(transformer_options, dict) else {})
-            first = x[0] if isinstance(x, list) else x
-            reason = patch._block_reason(options, first.device)
+            reason = patch._block_reason(options)
             if reason is None:
                 own = options.get(TAKE_FORWARD)
                 if own is not None:  # KJNodes' Low VRAM forward
@@ -635,13 +691,12 @@ class VedaPatch:
         if later:
             names = ', '.join(sorted({describe_forward(f)
                                       for f in later.values()}))
-            self._announce(
-                ('replaced', names),
-                f'Veda is not running: {names} replaces the MiniMax-H3 '
+            raise veda_status.VedaError(veda_status.bilingual(
+                f'Veda cannot run: {names} replaces the MiniMax-H3 '
                 'attention after Veda. Move the Veda node after it (last '
-                'before the sampler).', warn=True,
-                zh=f'Veda 未运行：{names} 在 Veda 之后替换了 MiniMax-H3 的'
-                   '注意力。请把 Veda 节点移到它后面（采样器之前的最后一个）。')
+                'before the sampler).',
+                f'Veda 无法运行：{names} 在 Veda 之后替换了 MiniMax-H3 的'
+                '注意力。请把 Veda 节点移到它后面（采样器之前的最后一个）。'))
 
     def install(self, transformer_options: dict) -> None:
         """Puts the override on top of whatever override is on the hook;
@@ -668,9 +723,7 @@ class VedaPatch:
         summary = self._summary()
         if summary:
             self.status.show(summary)
-        elif self.run.prepared and not self.run.calls and not any(
-                isinstance(key, tuple) and key[0] == 'replaced'
-                for key in self.run.announced):
+        elif self.run.prepared and not self.run.calls:
             self.status.warn(
                 'Veda did not run: no MiniMax-H3 attention call reached it '
                 'in this render. Another node probably replaces the H3 '

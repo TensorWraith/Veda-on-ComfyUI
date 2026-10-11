@@ -8,7 +8,7 @@
 
 Veda-on-ComfyUI：**把 Veda 学习型块稀疏注意力做成 ComfyUI 节点，加速 ComfyUI 原生的
 MiniMax-H3（T2VA / FL2VA / R2VA）**，同时保证普通用户的工作流、LoRA、各种 H3 权重照常使用。
-取舍顺序：**正确性与"不坏图" > 用户体验 > 跨平台覆盖 > 峰值速度**。
+取舍顺序：**正确性与"不悄悄失效" > 用户体验 > 跨平台覆盖 > 峰值速度**。
 
 - 一个节点，MODEL 进 MODEL 出；通过 `transformer_options["optimized_attention_override"]`
   只替换 H3 的自注意力计算，不改权重、不占 `patches_replace`。
@@ -78,11 +78,15 @@ MiniMax-H3（T2VA / FL2VA / R2VA）**，同时保证普通用户的工作流、L
 - 公共函数写类型注解；张量参数在 docstring 里写 shape 与 dtype，例如 `q: [S, H, D] bf16`。
 - 参数不合法时显式 `raise`，错误信息是给用户看的：说清楚哪里错了、应该怎么写
   （节点把 `ValueError` 原样显示出来）。
-- **用户可见的回退必须可见**：任何从稀疏退回全注意力的情况都要通过 `status.NodeStatus`
-  显示在节点上（并写日志），不能静默。反过来，任何稀疏路径的异常都不能让用户的渲染失败：
-  `comfy_patch` 会捕获、提示并退回全注意力（ComfyUI 的中断异常除外）。
+- **出错不回退，报错并说明原因**：Veda 跑不了（没有 kernel、kernel 起不来、运行时异常、
+  布局读不懂、头数对不上、别的节点挡住了它）就让这次运行停下，不能悄悄退回全注意力。
+  用户自己能修的（缺包：`base.MissingDependency`；硬件不支持；节点位置不对；显存不足）
+  报错里直接写怎么修；其他一律用 `status.issue_report` 附上环境、调用上下文和 traceback，
+  并给出 GitHub issue 地址。显存不足保持 `torch.cuda.OutOfMemoryError` 类型（ComfyUI 靠它
+  卸载模型）。设计上就该走全注意力的调用（`full_attention_layers` / `steps`、带 mask 的调用、
+  非 H3 的调用）不算出错，照常走并计入摘要。
 - 日志只写 ASCII（Windows 控制台和日志文件不一定是 UTF-8）。节点上的状态文字**不用 emoji**，
-  除中文外唯一的非 ASCII 字符是分隔符 `·`（`status.py` 写日志时换成 `|`）；是否可用、是否回退
+  除中文外唯一的非 ASCII 字符是分隔符 `·`（`status.py` 写日志时换成 `|`）；是否可用、为什么停下
   靠措辞说清楚，不靠图标。
 - **警告和错误中英双语，英文在前、中文在后**：后端不知道每个浏览器用哪种语言，所以运行时的
   警告（`NodeStatus.warn(en, zh=...)`，中文只发到节点，日志仍是英文）和 `ValueError`

@@ -226,23 +226,29 @@ class VedaSparseAttention(io.ComfyNode):
                 f'0-{num_layers - 1}; {missing} do not exist.',
                 f'full_attention_layers：这个模型的 block 是 '
                 f'0-{num_layers - 1}，{missing} 不存在。'))
-        patched, patch = comfy_patch.apply(model, bundle, settings, node_id)
+        if _other_sparse_node(model):
+            raise ValueError(veda_status.bilingual(
+                'ComfyUI\'s "Model Sparse Attention" node is also applied; '
+                'on H3 it replaces the attention blocks, so Veda cannot '
+                'run. Remove one of the two.',
+                '同时接了 ComfyUI 的 "Model Sparse Attention" 节点：它在 H3 '
+                '上直接替换注意力 block，Veda 无法运行。请二选一。'))
+        # Resolved here rather than at the first sampling step, so that a
+        # kernel which cannot run stops the prompt on this node, with the
+        # reason, before the sampler starts. The result is cached.
         device = comfy.model_management.get_torch_device()
         info = hardware.describe(device)
-        probe = backends.probe(device)
-        usable = [display for _, display, error in probe if error is None]
-        lines = [f'Veda ready · {usable[0] if usable else "full attention"}'
+        resolution = backends.resolve(device, notify=status.show)
+        if resolution.backend is None:
+            raise comfy_patch.kernel_error(resolution)
+        patched, patch = comfy_patch.apply(model, bundle, settings, node_id)
+        lines = [f'Veda ready · {resolution.backend.display}'
                  f' · {info.short_name}',
                  f'Sparsity: {settings.describe()}']
         full = settings.describe_full_attention()
         if full:
             lines.append(f'Full attention: {full}')
         notes = []
-        if info.kind == 'cuda' and any(error for _, _, error in probe):
-            notes.append(('Tip: pip install triton (triton-windows on '
-                          'Windows) for the sparse kernel',
-                          '提示：pip install triton（Windows 上是 '
-                          'triton-windows）即可启用稀疏 kernel'))
         if patch.taken_over:
             names = ', '.join(patch.taken_over)
             notes.append((f'Took over the attention from {names}: Veda runs '
@@ -253,22 +259,14 @@ class VedaSparseAttention(io.ComfyNode):
         lines += [veda_status.bilingual(en, zh) for en, zh in notes]
         if verbose:
             lines.append(f'Predictor: {bundle.describe()}')
-            lines += [f'  {name}: {error or "available"}'
-                      for name, _, error in probe]
+            lines.append(f'  {resolution.report()}')
             if patch.taken_over:
                 lines.append(
                     '  sparse layers use: '
                     + ('the Low VRAM attention forward (KJNodes)'
                        if _takes_forward(patched)
                        else 'ComfyUI\'s MiniMax-H3 attention forward'))
-        if _other_sparse_node(model):
-            status.warn('ComfyUI\'s "Model Sparse Attention" node is also '
-                        'applied; on H3 it replaces the attention blocks, so '
-                        'Veda would not run. Remove one of the two.',
-                        zh='同时接了 ComfyUI 的 "Model Sparse Attention" 节点：'
-                           '它在 H3 上直接替换注意力 block，Veda 不会运行。'
-                           '请二选一。')
-        elif patch.taken_over:
+        if patch.taken_over:
             status.warn('\n'.join(lines))
         else:
             status.show('\n'.join(lines))

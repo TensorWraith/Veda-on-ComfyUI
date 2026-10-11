@@ -191,6 +191,43 @@ def test_declined_calls_reach_the_previous_override(h3, bundle):
     assert len(patch.installed) == 1
 
 
+@pytest.mark.parametrize('error,says,report', [
+    (RuntimeError('an illegal memory access was encountered'),
+     'its sparse attention failed', True),
+    (torch.cuda.OutOfMemoryError('CUDA out of memory'),
+     'ran out of GPU memory', False),
+])
+def test_a_failing_kernel_stops_the_render(h3, bundle, monkeypatch, error,
+                                           says, report):
+    """No silent full attention: a kernel error ends the run with the
+    reason; out of memory is the user's to fix (and stays an OOM, which
+    ComfyUI answers by unloading models), anything else comes with an
+    issue report."""
+    import reference_backend
+    from veda_comfy import backends
+    from veda_comfy import hardware
+    from veda_comfy import status
+
+    class Failing(reference_backend.ReferenceBackend):
+        def attend(self, *args):
+            raise error
+
+    monkeypatch.setattr(
+        backends, 'resolve', lambda device, notify=None: backends.Resolution(
+            hardware.describe(device), Failing(), [('failing', 'ok')]))
+    patch = _patch(bundle, {'ratio': 0.1}, {'ratio': 0.1})
+    expected = status.VedaError if report else torch.cuda.OutOfMemoryError
+    with pytest.raises(expected) as caught:
+        _forward(h3, 't2va', patch)
+    text = str(caught.value)
+    assert says in text
+    assert (status.ISSUES_URL in text) == report
+    if report:
+        for part in ('Call: block 0', 'Backend: reference (fp32)',
+                     'Traceback', 'illegal memory access'):
+            assert part in text, f'missing {part!r}'
+
+
 @pytest.mark.parametrize('verbose', [False, True])
 def test_node_text_reports_sparsity_not_call_counts(h3, bundle, verbose):
     patch = _patch(bundle, {'ratio': 0.1}, {'ratio': 0.1}, verbose=verbose)
