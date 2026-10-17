@@ -92,34 +92,38 @@ Changes to the spatial rules proportionally change temporal allocation.
 positions, and both new adaptive modes default to disabled. Old workflows
 should retain manual operation; verify saved widget values after upgrading.
 
-## Installing this fork's adaptive-budget version
+## Installation — TensorWraith fork
 
-This fork includes optional resolution- and video-length-adaptive attention
-budgets on its `main` branch. The official Comfy Registry package
-(`comfy node install veda-sparse-attention`) installs the upstream release,
-which may **not** include these changes.
+**To use the adaptive-budget features, install this fork from GitHub.**
+The ComfyUI Manager entry named “Veda” and the command
+`comfy node install veda-sparse-attention` install the **original upstream
+package**, not this fork. They are not installation methods for these changes.
 
-To install this fork directly, clone it into `ComfyUI/custom_nodes/`:
+Requires **ComfyUI 0.38.0 or later**.
 
-```bash
-cd ComfyUI/custom_nodes
-git clone https://github.com/TensorWraith/Veda-on-ComfyUI.git veda-sparse-attention
-```
+1. If the original Veda node is already installed, remove or disable that
+   installation first to avoid duplicate custom nodes. Check both
+   `ComfyUI/custom_nodes/` and ComfyUI Manager.
+2. From your ComfyUI installation directory, clone this fork:
 
-Restart ComfyUI, enable `adaptive_budgets`, and optionally enable
-`experimental_temporal_scaling` with `video_length_scaling=1.0`.
-Do not keep both this fork and an upstream copy of the Veda node active
-in `custom_nodes` at the same time.
+   ```bash
+   cd custom_nodes
+   git clone https://github.com/TensorWraith/Veda-on-ComfyUI.git veda-sparse-attention
+   ```
 
-## Installation
+3. Restart ComfyUI. Follow the **Predictor** instructions below to obtain
+   the required predictor model if it is not already installed.
+4. In **Veda Sparse Attention (MiniMax H3)**, show advanced inputs and turn
+   on `adaptive_budgets` to use the resolution rules. For video-length
+   adjustment, also turn on `experimental_temporal_scaling` (default
+   `video_length_scaling=1.0`).
 
-Requires ComfyUI >= 0.38.0. In ComfyUI Manager, search "Veda". Or:
+**Updating:** Run `git pull` from
+`ComfyUI/custom_nodes/veda-sparse-attention/` and restart ComfyUI.
 
-```bash
-comfy node install veda-sparse-attention
-```
-
-Or clone this repository into `ComfyUI/custom_nodes/` and restart ComfyUI.
+**Want the unmodified original Veda instead?** See the
+[upstream installation instructions](https://github.com/veda-sparse/Veda-on-ComfyUI#installation).
+Do not install both copies at once.
 
 ## Usage
 
