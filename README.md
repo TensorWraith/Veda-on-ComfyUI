@@ -6,13 +6,21 @@
 
 </div>
 
+## Why this fork exists
+
+**Seeing sudden flashes, flickering, or strange visual artifacts when generating longer or higher-resolution videos with Veda?** This version may help.
+
+Veda makes video generation faster by reducing how much attention the model calculates. In some demanding video workflows, that can mean the model has too little information to keep every frame visually consistent, causing noticeable flashes or other artifacts. This fork gives Veda the option to **automatically use more attention when a video is longer or higher resolution**, while keeping a lighter setting for smaller videos.
+
+The aim is simple: **keep the speed benefits of Veda while giving you more control over image stability.** In our MiniMax H3 continuation tests, adjusting these settings eliminated the flashes we observed. It won't fix every type of video artifact, and it may make some generations slower, but it's worth trying if you've encountered this problem.
+
 > [!IMPORTANT]
 > **TensorWraith's community fork of [Veda Sparse Attention](https://github.com/veda-sparse/Veda-on-ComfyUI).**
 > This fork adds **optional resolution-adaptive and video-length-adaptive generated-attention budgets** for MiniMax H3, designed to reduce visible flashing in longer, high-resolution video continuations while retaining faster, lower-budget settings where appropriate. Both features are **off by default**, preserving upstream behaviour.
 >
 > **Observed result:** In a controlled 960 × 1664, 12.2-second continuation, increasing generated attention from **64 → 77 → 97 tiles** reduced observed flashes from **3 → 1 → 0**. Another continuation at the calibrated 97-tile setting also had no visible flashes. These are workflow-specific observations, not a guarantee.
 >
-> **Install this version:** See [fork installation instructions](#installing-this-forks-adaptive-budget-version). Installing the official Comfy Registry package may install the upstream version **without** these changes.
+> **Install this version:** See [fork installation instructions](#installation--tensorwraith-fork). Installing the official Comfy Registry package may install the upstream version **without** these changes.
 >
 > **Configure it:** Enable `adaptive_budgets` for automatic per-resolution tile budgets (`1:32, 2:64, 64` by default), and optionally `experimental_temporal_scaling` with `video_length_scaling=1.0`. See [technical details](docs/features/resolution_adaptive_budgets.md) and [upstream contribution PR #12](https://github.com/veda-sparse/Veda-on-ComfyUI/pull/12).
 >
