@@ -57,6 +57,23 @@
 较小的数字有利于速度，`0` 表示不增加时长注意力。
 默认最高为 168 tiles，且不会降低用户显式设置的更高分辨率预算。
 
+## 安装本分支的自适应预算版本
+
+本 fork 的 `main` 分支包含按分辨率与时长调整注意力预算的功能。
+Comfy Registry 官方安装命令 `comfy node install veda-sparse-attention`
+安装的是上游版本，可能尚未包含这些改动。
+
+如需安装此版本，请在 `ComfyUI/custom_nodes/` 中克隆：
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/TensorWraith/Veda-on-ComfyUI.git veda-sparse-attention
+```
+
+重启 ComfyUI 后启用 `adaptive_budgets`，根据需要启用
+`experimental_temporal_scaling`，默认 `video_length_scaling=1.0`。
+请勿同时启用本 fork 和上游 Veda 节点的两个副本。
+
 ## 安装
 
 需要 ComfyUI >= 0.38.0。在 ComfyUI Manager 里搜索 "Veda"，或者：
