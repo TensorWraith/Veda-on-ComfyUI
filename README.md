@@ -6,6 +6,18 @@
 
 </div>
 
+> [!IMPORTANT]
+> **TensorWraith's community fork of [Veda Sparse Attention](https://github.com/veda-sparse/Veda-on-ComfyUI).**
+> This fork adds **optional resolution-adaptive and video-length-adaptive generated-attention budgets** for MiniMax H3, designed to reduce visible flashing in longer, high-resolution video continuations while retaining faster, lower-budget settings where appropriate. Both features are **off by default**, preserving upstream behaviour.
+>
+> **Observed result:** In a controlled 960 × 1664, 12.2-second continuation, increasing generated attention from **64 → 77 → 97 tiles** reduced observed flashes from **3 → 1 → 0**. Another continuation at the calibrated 97-tile setting also had no visible flashes. These are workflow-specific observations, not a guarantee.
+>
+> **Install this version:** See [fork installation instructions](#installing-this-forks-adaptive-budget-version). Installing the official Comfy Registry package may install the upstream version **without** these changes.
+>
+> **Configure it:** Enable `adaptive_budgets` for automatic per-resolution tile budgets (`1:32, 2:64, 64` by default), and optionally `experimental_temporal_scaling` with `video_length_scaling=1.0`. See [technical details](docs/features/resolution_adaptive_budgets.md) and [upstream contribution PR #12](https://github.com/veda-sparse/Veda-on-ComfyUI/pull/12).
+>
+> The underlying Veda implementation, predictor, hardware requirements and original project documentation remain credited to the [Veda maintainers](https://github.com/veda-sparse/Veda-on-ComfyUI).
+
 [Paper](https://arxiv.org/abs/2605.30325) · [Project Page](https://veda-sparse.github.io/) · [Predictor](https://huggingface.co/Veda-Sparse/Minimax-H3-T2VA-Veda-8NFE-600Step-Preview) · [Training Code](https://github.com/veda-sparse/Miowtion) · [中文说明](README.zh-CN.md)
 
 ## Introduction
