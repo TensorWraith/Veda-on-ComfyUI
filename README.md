@@ -80,6 +80,25 @@ Changes to the spatial rules proportionally change temporal allocation.
 positions, and both new adaptive modes default to disabled. Old workflows
 should retain manual operation; verify saved widget values after upgrading.
 
+## Installing this fork's adaptive-budget version
+
+This fork includes optional resolution- and video-length-adaptive attention
+budgets on its `main` branch. The official Comfy Registry package
+(`comfy node install veda-sparse-attention`) installs the upstream release,
+which may **not** include these changes.
+
+To install this fork directly, clone it into `ComfyUI/custom_nodes/`:
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/TensorWraith/Veda-on-ComfyUI.git veda-sparse-attention
+```
+
+Restart ComfyUI, enable `adaptive_budgets`, and optionally enable
+`experimental_temporal_scaling` with `video_length_scaling=1.0`.
+Do not keep both this fork and an upstream copy of the Veda node active
+in `custom_nodes` at the same time.
+
 ## Installation
 
 Requires ComfyUI >= 0.38.0. In ComfyUI Manager, search "Veda". Or:
