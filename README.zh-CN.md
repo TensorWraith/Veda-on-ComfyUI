@@ -69,32 +69,35 @@
 较小的数字有利于速度，`0` 表示不增加时长注意力。
 默认最高为 168 tiles，且不会降低用户显式设置的更高分辨率预算。
 
-## 安装本分支的自适应预算版本
+## 安装 — TensorWraith fork
 
-本 fork 的 `main` 分支包含按分辨率与时长调整注意力预算的功能。
-Comfy Registry 官方安装命令 `comfy node install veda-sparse-attention`
-安装的是上游版本，可能尚未包含这些改动。
+**如需使用自适应预算功能，请直接从 GitHub 安装本 fork。**
+ComfyUI Manager 中的 “Veda” 和命令
+`comfy node install veda-sparse-attention` 安装的是**原版上游软件包**，
+而非此 fork，不能通过这两种方式获得本版本的改动。
 
-如需安装此版本，请在 `ComfyUI/custom_nodes/` 中克隆：
+需要 **ComfyUI 0.38.0 或更高版本**。
 
-```bash
-cd ComfyUI/custom_nodes
-git clone https://github.com/TensorWraith/Veda-on-ComfyUI.git veda-sparse-attention
-```
+1. 如果已经安装原版 Veda，请先卸载或停用旧版本，以免出现重复节点。
+   检查 `ComfyUI/custom_nodes/` 和 ComfyUI Manager。
+2. 在 ComfyUI 安装目录中运行：
 
-重启 ComfyUI 后启用 `adaptive_budgets`，根据需要启用
-`experimental_temporal_scaling`，默认 `video_length_scaling=1.0`。
-请勿同时启用本 fork 和上游 Veda 节点的两个副本。
+   ```bash
+   cd custom_nodes
+   git clone https://github.com/TensorWraith/Veda-on-ComfyUI.git veda-sparse-attention
+   ```
 
-## 安装
+3. 重启 ComfyUI。如果尚未安装所需的 predictor 模型，请参阅下文的**打分器**部分。
+4. 在 **Veda Sparse Attention (MiniMax H3)** 节点中显示高级输入，
+   启用 `adaptive_budgets`；如需按时长调整预算，再启用
+   `experimental_temporal_scaling`（`video_length_scaling` 默认 `1.0`）。
 
-需要 ComfyUI >= 0.38.0。在 ComfyUI Manager 里搜索 "Veda"，或者：
+**更新：** 在 `ComfyUI/custom_nodes/veda-sparse-attention/` 中运行 `git pull`，
+然后重启 ComfyUI。
 
-```bash
-comfy node install veda-sparse-attention
-```
-
-也可以把本仓库 clone 到 `ComfyUI/custom_nodes/` 后重启 ComfyUI。
+**如需安装原始 Veda：** 请参阅
+[上游安装说明](https://github.com/veda-sparse/Veda-on-ComfyUI#installation)。
+不要同时安装两个版本。
 
 ## 使用
 
