@@ -6,6 +6,18 @@
 
 </div>
 
+> [!IMPORTANT]
+> **TensorWraith 维护的 [Veda Sparse Attention](https://github.com/veda-sparse/Veda-on-ComfyUI) 社区 fork。**
+> 该版本针对 MiniMax H3 新增可选的**按分辨率**和**按视频时长**自动调整生成注意力 tile 预算的功能，旨在减少较长、高分辨率视频续生成时的闪烁。两项功能默认均**关闭**，保留上游原有行为。
+>
+> **测试观察：** 在 960 × 1664、12.2 秒的续生成测试中，生成注意力预算从 **64 → 77 → 97 tiles** 增加时，观察到的闪烁次数从 **3 → 1 → 0**。另一段使用校准配置的续生成也未观察到闪烁。这是特定工作流中的结果，并非普遍保证。
+>
+> **安装本 fork：** 请参阅[本分支安装说明](#安装本分支的自适应预算版本)。官方 Comfy Registry 包可能不包含此版本的改动。
+>
+> **启用功能：** 设置 `adaptive_budgets`（默认分辨率规则 `1:32, 2:64, 64`）；可按需启用 `experimental_temporal_scaling` 和 `video_length_scaling=1.0`。详见[技术文档](docs/features/resolution_adaptive_budgets.md)及[上游 PR #12](https://github.com/veda-sparse/Veda-on-ComfyUI/pull/12)。
+>
+> Veda 核心实现、预测器、硬件要求及原项目文档归功于[原项目维护者](https://github.com/veda-sparse/Veda-on-ComfyUI)。
+
 [论文](https://arxiv.org/abs/2605.30325) · [项目主页](https://veda-sparse.github.io/) · [打分器](https://huggingface.co/Veda-Sparse/Minimax-H3-T2VA-Veda-8NFE-600Step-Preview) · [训练代码](https://github.com/veda-sparse/Miowtion) · [English](README.md)
 
 ## 简介
